@@ -3,16 +3,28 @@
     "whether_resampled_luna16": "$(not @whether_raw_luna16)",
     "imports": [
         "$import glob",
+        "$import numpy",
         "$import os"
     ],
     "bundle_root": ".",
+    "image_key": "image",
     "ckpt_dir": "$@bundle_root + '/models'",
     "output_dir": "$@bundle_root + '/eval'",
+    "output_filename": "result_luna16_fold0.json",
     "data_list_file_path": "$@bundle_root + '/LUNA16_datasplit/dataset_fold0.json'",
     "dataset_dir": "/datasets/LUNA16_Images_resample",
     "test_datalist": "$monai.data.load_decathlon_datalist(@data_list_file_path, is_segmentation=True, data_list_key='validation', base_dir=@dataset_dir)",
     "device": "$torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')",
     "amp": true,
+    "load_pretrain": true,
+    "spatial_dims": 3,
+    "num_classes": 1,
+    "force_sliding_window": false,
+    "size_divisible": [
+        16,
+        16,
+        8
+    ],
     "infer_patch_size": [
         512,
         512,
@@ -47,22 +59,22 @@
     "feature_extractor": "$monai.apps.detection.networks.retinanet_network.resnet_fpn_feature_extractor(@backbone,3,False,[1,2],None)",
     "network_def": {
         "_target_": "RetinaNet",
-        "spatial_dims": 3,
-        "num_classes": 1,
+        "spatial_dims": "@spatial_dims",
+        "num_classes": "@num_classes",
         "num_anchors": 3,
         "feature_extractor": "@feature_extractor",
-        "size_divisible": [
-            16,
-            16,
-            8
-        ]
+        "size_divisible": "@size_divisible",
+        "use_list_output": false
     },
     "network": "$@network_def.to(@device)",
     "detector": {
         "_target_": "RetinaNetDetector",
         "network": "@network",
         "anchor_generator": "@anchor_generator",
-        "debug": false
+        "debug": false,
+        "spatial_dims": "@spatial_dims",
+        "num_classes": "@num_classes",
+        "size_divisible": "@size_divisible"
     },
     "detector_ops": [
         "$@detector.set_target_keys(box_key='box', label_key='label')",
@@ -74,31 +86,28 @@
         "transforms": [
             {
                 "_target_": "LoadImaged",
-                "keys": "image",
-                "meta_key_postfix": "meta_dict",
+                "keys": "@image_key",
                 "_disabled_": "@whether_raw_luna16"
             },
             {
                 "_target_": "LoadImaged",
-                "keys": "image",
-                "meta_key_postfix": "meta_dict",
+                "keys": "@image_key",
                 "reader": "itkreader",
                 "affine_lps_to_ras": true,
                 "_disabled_": "@whether_resampled_luna16"
             },
             {
                 "_target_": "EnsureChannelFirstd",
-                "keys": "image",
-                "meta_key_postfix": "meta_dict"
+                "keys": "@image_key"
             },
             {
                 "_target_": "Orientationd",
-                "keys": "image",
+                "keys": "@image_key",
                 "axcodes": "RAS"
             },
             {
                 "_target_": "Spacingd",
-                "keys": "image",
+                "keys": "@image_key",
                 "pixdim": [
                     0.703125,
                     0.703125,
@@ -108,7 +117,7 @@
             },
             {
                 "_target_": "ScaleIntensityRanged",
-                "keys": "image",
+                "keys": "@image_key",
                 "a_min": -1024.0,
                 "a_max": 300.0,
                 "b_min": 0.0,
@@ -117,7 +126,7 @@
             },
             {
                 "_target_": "EnsureTyped",
-                "keys": "image"
+                "keys": "@image_key"
             }
         ]
     },
@@ -136,7 +145,8 @@
     },
     "inferer": {
         "_target_": "scripts.detection_inferer.RetinaNetInferer",
-        "detector": "@detector"
+        "detector": "@detector",
+        "force_sliding_window": "@force_sliding_window"
     },
     "postprocessing": {
         "_target_": "Compose",
@@ -145,14 +155,13 @@
                 "_target_": "ClipBoxToImaged",
                 "box_keys": "box",
                 "label_keys": "label",
-                "box_ref_image_keys": "image",
+                "box_ref_image_keys": "@image_key",
                 "remove_empty": true
             },
             {
                 "_target_": "AffineBoxToWorldCoordinated",
                 "box_keys": "box",
-                "box_ref_image_keys": "image",
-                "image_meta_key_postfix": "meta_dict",
+                "box_ref_image_keys": "@image_key",
                 "affine_lps_to_ras": true
             },
             {
@@ -164,19 +173,12 @@
             {
                 "_target_": "DeleteItemsd",
                 "keys": [
-                    "image"
+                    "@image_key"
                 ]
             }
         ]
     },
     "handlers": [
-        {
-            "_target_": "CheckpointLoader",
-            "load_path": "$@bundle_root + '/models/model.pt'",
-            "load_dict": {
-                "model": "@network"
-            }
-        },
         {
             "_target_": "StatsHandler",
             "iteration_log": false
@@ -184,8 +186,8 @@
         {
             "_target_": "scripts.detection_saver.DetectionSaver",
             "output_dir": "@output_dir",
-            "filename": "result_luna16_fold0.json",
-            "batch_transform": "$lambda x: [xx['image_meta_dict'] for xx in x]",
+            "filename": "@output_filename",
+            "batch_transform": "$lambda x: [xx['image'].meta for xx in x]",
             "output_transform": "$lambda x: [@postprocessing({**xx['pred'],'image':xx['image']}) for xx in x]",
             "pred_box_key": "box",
             "pred_label_key": "label",
@@ -202,8 +204,16 @@
         "val_handlers": "@handlers",
         "amp": "@amp"
     },
+    "checkpointloader": {
+        "_target_": "CheckpointLoader",
+        "load_path": "$@bundle_root + '/models/model.pt'",
+        "load_dict": {
+            "model": "@network"
+        }
+    },
     "initialize": [
-        "$setattr(torch.backends.cudnn, 'benchmark', True)"
+        "$setattr(torch.backends.cudnn, 'benchmark', True)",
+        "$@checkpointloader(@evaluator) if @load_pretrain else None"
     ],
     "run": [
         "$@evaluator.run()"

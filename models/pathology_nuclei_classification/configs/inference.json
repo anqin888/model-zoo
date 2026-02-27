@@ -6,6 +6,7 @@
         "$import os"
     ],
     "bundle_root": ".",
+    "checkpoint": "$@bundle_root + '/models/model.pt'",
     "output_dir": "$@bundle_root + '/eval'",
     "dataset_dir": "/workspace/data/CoNSePNuclei",
     "images": "$list(sorted(glob.glob(@dataset_dir + '/Test/Images/*.png')))[:1]",
@@ -28,7 +29,8 @@
                     "image",
                     "label"
                 ],
-                "dtype": "uint8"
+                "dtype": "uint8",
+                "image_only": false
             },
             {
                 "_target_": "EnsureChannelFirstd",
@@ -87,7 +89,7 @@
     "handlers": [
         {
             "_target_": "CheckpointLoader",
-            "load_path": "$@bundle_root + '/models/model.pt'",
+            "load_path": "$@checkpoint",
             "load_dict": {
                 "model": "@network"
             }
@@ -108,7 +110,7 @@
         "amp": true
     },
     "initialize": [
-        "$setattr(torch.backends.cudnn, 'benchmark', True)",
+        "$monai.utils.set_determinism(seed=123)",
         "$import scripts",
         "$monai.data.register_writer('json', scripts.ClassificationWriter)"
     ],

@@ -16,35 +16,50 @@
 #
 
 # Argument(s):
-#   BUILD_TYPE:   all/specific_test_name, tests to execute
+#   $1 - Dist flag (True/False)
+
+dist_flag=$1
 
 set -ex
-BUILD_TYPE=all
 
-if [[ $# -eq 1 ]]; then
-    BUILD_TYPE=$1
+export ALLOW_MONAI_RC=true
 
-elif [[ $# -gt 1 ]]; then
+if [[ $# -gt 1 ]]; then
     echo "ERROR: too many parameters are provided"
     exit 1
 fi
 
-init_pipenv() {
-    echo "initializing pip environment: $1"
-    pipenv install update pip wheel
-    pipenv install --python=3.8 -r $1
-    export PYTHONPATH=$PWD
+init_venv() {
+    if [ ! -d "model_zoo_venv" ]; then  # Check if the venv directory does not exist
+        echo "initializing pip environment"
+        python -m venv model_zoo_venv
+        source model_zoo_venv/bin/activate
+        pip install --upgrade pip wheel
+        pip install --upgrade setuptools
+        pip install jsonschema gdown pyyaml parameterized fire
+        export PYTHONPATH=$PWD
+    else
+        echo "Virtual environment model_zoo_venv already exists. Activating..."
+        source model_zoo_venv/bin/activate
+        pip install --upgrade pip wheel
+        pip install --upgrade setuptools
+        pip install jsonschema gdown pyyaml parameterized fire
+        export PYTHONPATH=$PWD
+    fi
 }
 
-remove_pipenv() {
-    echo "removing pip environment"
-    pipenv --rm
-    rm Pipfile Pipfile.lock
+remove_venv() {
+    if [ -d "model_zoo_venv" ]; then  # Check if the venv directory exists
+        echo "Removing virtual environment..."
+        deactivate 2>/dev/null || true  # Deactivate venv, ignore errors if not activated
+        rm -rf model_zoo_venv  # Remove the venv directory
+    else
+        echo "Virtual environment not found. Skipping removal."
+    fi
 }
 
 verify_bundle() {
     echo 'Run verify bundle...'
-    init_pipenv requirements-dev.txt
     head_ref=$(git rev-parse HEAD)
     git fetch origin dev $head_ref
     # achieve all changed files in 'models'
@@ -52,44 +67,49 @@ verify_bundle() {
     if [ ! -z "$changes" ]
     then
         # get all changed bundles
-        bundle_list=$(pipenv run python $(pwd)/ci/get_changed_bundle.py --f "$changes")
+        bundle_list=$(python $(pwd)/ci/get_changed_bundle.py --f "$changes")
         if [ ! -z "$bundle_list" ]
         then
-            pipenv run python $(pwd)/ci/prepare_schema.py --l "$bundle_list"
-            for bundle in $bundle_list;
-            do
-                init_pipenv requirements-dev.txt
-                # get required libraries according to the bundle's metadata file
-                requirements=$(pipenv run python $(pwd)/ci/get_bundle_requirements.py --b "$bundle")
-                if [ ! -z "$requirements" ]; then
-                    echo "install required libraries for bundle: $bundle"
-                    pipenv install -r "$requirements"
-                fi
-                # verify bundle
-                pipenv run python $(pwd)/ci/verify_bundle.py --b "$bundle"
-                remove_pipenv
-            done
+            python $(pwd)/ci/prepare_schema.py --l "$bundle_list"
+        for bundle in $bundle_list;
+        do
+            # get required libraries according to the bundle's metadata file
+            requirements_file="requirements_$bundle.txt"
+            python $(pwd)/ci/get_bundle_requirements.py --b "$bundle" --requirements_file "$requirements_file"
+            # check if ALLOW_MONAI_RC is set to 1, if so, append --pre to the pip install command
+            if [ $ALLOW_MONAI_RC = true ]; then
+                include_pre_release="--pre"
+            else
+                include_pre_release=""
+            fi
+            init_venv
+            # Check if the requirements file exists and is not empty
+            if [ -s "$requirements_file" ]; then
+                echo "install required libraries for bundle: $bundle"
+                pip install $include_pre_release -r "$requirements_file"
+            fi
+            # get extra install script if exists
+            extra_script=$(python $(pwd)/ci/get_bundle_requirements.py --b "$bundle" --get_script True)
+            if [ ! -z "$extra_script" ]; then
+                echo "install extra libraries with script: $extra_script"
+                bash $extra_script
+            fi
+            # verify bundle
+            python $(pwd)/ci/verify_bundle.py --b "$bundle"
+            test_cmd="python $(pwd)/ci/unit_tests/runner.py --b \"$bundle\""
+            if [ "$dist_flag" = "True" ]; then
+                test_cmd="torchrun $(pwd)/ci/unit_tests/runner.py --b \"$bundle\" --dist True"
+            fi
+            eval $test_cmd
+            remove_venv
+        done
         else
             echo "this pull request does not change any bundles, skip verify."
         fi
     else
         echo "this pull request does not change any files in 'models', skip verify."
-        remove_pipenv
+        remove_venv
     fi
 }
 
-case $BUILD_TYPE in
-
-    all)
-        echo "Run all tests..."
-        verify_bundle
-        ;;
-
-    verify_bundle)
-        verify_bundle
-        ;;
-
-    *)
-        echo "ERROR: unknown parameter: $BUILD_TYPE"
-        ;;
-esac
+verify_bundle

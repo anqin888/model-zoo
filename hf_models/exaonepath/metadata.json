@@ -1,0 +1,36 @@
+{
+    "schema": "https://github.com/Project-MONAI/MONAI-extra-test-data/releases/download/0.8.1/meta_schema_hf_20250321.json",
+    "version": "1.1.0",
+    "changelog": {
+        "1.1.0": "Enhanced metadata with detailed model architecture, performance metrics on downstream tasks, and preprocessing requirements.",
+        "1.0.0": "initial release of EXAONEPath 1.0"
+    },
+    "monai_version": "1.4.0",
+    "pytorch_version": "2.4.0",
+    "numpy_version": "1.24.4",
+    "required_packages_version": {
+        "torch": "2.4.0",
+        "torchvision": "0.15.0",
+        "torchstain": "1.3.0",
+        "pillow": "10.0.0",
+        "huggingface_hub": "0.24.2",
+        "transformers": "4.43.3"
+    },
+    "supported_apps": {
+        "exaonepath": ""
+    },
+    "name": "EXAONEPath",
+    "task": "Pathology Foundation Model and Feature Extraction",
+    "description": "EXAONEPath is a patch-level pathology foundation model that achieves state-of-the-art performance across multiple pathology tasks while maintaining computational efficiency. It excels in tissue classification, tumor detection, and microsatellite instability assessment.",
+    "authors": "LG AI Research Team",
+    "copyright": "LG AI Research",
+    "data_source": "Large-scale collection of pathology WSIs processed into patches",
+    "data_type": "WSI patches",
+    "image_classes": "RGB pathology image patches",
+    "huggingface_model_id": "LGAI-EXAONE/EXAONEPath",
+    "huggingface_url": "https://huggingface.co/LGAI-EXAONE/EXAONEPath",
+    "intended_use": "Research and clinical support for pathology image analysis",
+    "references": [
+        "Yun, Juseung, et al. 'EXAONEPath 1.0 Patch-level Foundation Model for Pathology', arXiv preprint arXiv:2408.00380 (2024)."
+    ]
+}

@@ -11,14 +11,22 @@ A basic example to download and extract a bundle is:
 
 ```bash
 pip install "monai[fire]"
-python -m monai.bundle download "wholeBody_ct_segmentation" --bundle_dir "bundles/"
+python -m monai.bundle download "spleen_ct_segmentation" --bundle_dir "bundles/"
 ```
 
-- The commands will download `wholeBody_ct_segmentation` to the current directory's `bundles/` subdirectory.
+- The commands will download `spleen_ct_segmentation` to the current directory's `bundles/` subdirectory.
 - For more downloading options, please run `python -m monai.bundle download -h`
-- For the specific usage of a bundle, please refer to its `docs` folder, for example, `bundles/wholeBody_ct_segmentation/docs`.
+- For the specific usage of a bundle, please refer to its `docs` folder, for example, `bundles/spleen_ct_segmentation/docs`.
 
 To get started with the models, please see [the example use cases](https://github.com/Project-MONAI/tutorials/tree/main/model_zoo).
+
+## Template Bundles
+
+We aim to provide a number of template bundles in the zoo for you to copy and adapt to your own needs.
+This should help you reduce effort in developing your own bundles and also demonstrate what we feel to be good practice and design.
+We currently have the following:
+
+ * [Segmentation Template](./models/segmentation_template)
 
 ## License
 

@@ -32,7 +32,7 @@
         "model_name": "resnet18",
         "num_classes": 1,
         "use_conv": true,
-        "pretrained": true
+        "pretrained": false
     },
     "network": "$@network_def.to(@device)",
     "loss": {
@@ -174,7 +174,7 @@
             "_target_": "DataLoader",
             "dataset": "@train#dataset",
             "batch_size": 128,
-            "pin_memory": true,
+            "pin_memory": false,
             "num_workers": 8
         },
         "inferer": {
@@ -197,6 +197,11 @@
         },
         "handlers": [
             {
+                "_target_": "LrScheduleHandler",
+                "lr_scheduler": "@lr_scheduler",
+                "print_lr": true
+            },
+            {
                 "_target_": "ValidationHandler",
                 "validator": "@validate#evaluator",
                 "epoch_level": true,
@@ -206,11 +211,6 @@
                 "_target_": "StatsHandler",
                 "tag_name": "train_loss",
                 "output_transform": "$monai.handlers.from_engine(['loss'], first=True)"
-            },
-            {
-                "_target_": "LrScheduleHandler",
-                "lr_scheduler": "@lr_scheduler",
-                "print_lr": true
             },
             {
                 "_target_": "TensorBoardStatsHandler",
@@ -325,7 +325,7 @@
             "_target_": "DataLoader",
             "dataset": "@validate#dataset",
             "batch_size": 128,
-            "pin_memory": true,
+            "pin_memory": false,
             "shuffle": false,
             "num_workers": 8
         },
@@ -372,8 +372,7 @@
         }
     },
     "initialize": [
-        "$monai.utils.set_determinism(seed=15)",
-        "$setattr(torch.backends.cudnn, 'benchmark', True)"
+        "$monai.utils.set_determinism(seed=15)"
     ],
     "run": [
         "$@train#trainer.run()"

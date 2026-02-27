@@ -129,3 +129,7 @@ temp/
 # VSCode
 .vscode/
 *.zip
+models/*/models/*
+models/*/output/*
+models/*/eval/*
+hf_models/*/eval/*

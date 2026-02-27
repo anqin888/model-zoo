@@ -13,13 +13,16 @@
 import hashlib
 import json
 import os
+import re
 import shutil
-import subprocess
 from typing import List
 
 from monai.apps.utils import download_url
 from monai.bundle.config_parser import ConfigParser
-from monai.utils import look_up_option
+from monai.utils import look_up_option, optional_import
+
+huggingface_hub, _ = optional_import("huggingface_hub")
+Github, _ = optional_import("github", name="Github")
 
 SUPPORTED_HASH_TYPES = {"md5": hashlib.md5, "sha1": hashlib.sha1, "sha256": hashlib.sha256, "sha512": hashlib.sha512}
 
@@ -64,7 +67,7 @@ def get_changed_bundle_list(changed_dirs: List[str], root_path: str = "models"):
     return list(set(changed_bundle_list))
 
 
-def prepare_schema(bundle_list: List[str], root_path: str = "models"):
+def prepare_schema(bundle_list: List[str], root_path: str = "models", hf_model: bool = False):
     """
     This function is used to prepare schema for changed bundles.
     Due to Github's limitation (see: https://github.com/Project-MONAI/model-zoo/issues/111),
@@ -76,7 +79,10 @@ def prepare_schema(bundle_list: List[str], root_path: str = "models"):
     for bundle_name in bundle_list:
         bundle_path = os.path.join(root_path, bundle_name)
         if os.path.exists(bundle_path):
-            meta_file_path = os.path.join(bundle_path, "configs/metadata.json")
+            if hf_model:
+                meta_file_path = os.path.join(bundle_path, "metadata.json")
+            else:
+                meta_file_path = os.path.join(bundle_path, "configs/metadata.json")
             metadata = get_json_dict(meta_file_path)
             schema_url = metadata["schema"]
             schema_name = schema_url.split("/")[-1]
@@ -107,7 +113,7 @@ def download_large_files(bundle_path: str, large_file_name: str = "large_file.ym
 
 def save_model_info(model_info_dict, model_info_path: str):
     with open(model_info_path, "w") as f:
-        json.dump(model_info_dict, f)
+        json.dump(model_info_dict, f, indent=4)
 
 
 def get_latest_version(bundle_name: str, model_info_path: str):
@@ -120,51 +126,107 @@ def get_latest_version(bundle_name: str, model_info_path: str):
     return sorted(versions)[-1]
 
 
-def push_new_model_info_branch(model_info_path: str):
-    email = os.environ["email"]
-    username = os.environ["username"]
+def get_version_checksum(bundle_name: str, version: str, model_info_path: str):
+    model_info_dict = get_json_dict(model_info_path)
+    return model_info_dict[f"{bundle_name}_v{version}"]["checksum"]
 
+
+def submit_pull_request(model_info_path: str):
+    # set required info for a pull request
     branch_name = "auto-update-model-info"
-    create_push_cmd = f"git checkout -b {branch_name}; git push --set-upstream origin {branch_name}"
-
-    git_config = f"git config user.email {email}; git config user.name {username}"
-    commit_message = "git commit -m 'auto update model_info'"
-    full_cmd = f"{git_config}; git add {model_info_path}; {commit_message}; {create_push_cmd}"
-
-    call_status = subprocess.run(full_cmd, shell=True)
-    call_status.check_returncode()
-
-    return branch_name
-
-
-def create_pull_request(branch_name: str, pr_title: str = "'auto update model_info [skip gpu]'"):
-    create_command = f"gh pr create --fill --title {pr_title} --base dev --head {branch_name}"
-    call_status = subprocess.run(create_command, shell=True)
-    call_status.check_returncode()
-
-
-def compress_bundle(root_path: str, bundle_name: str, bundle_zip_name: str):
-    touch_cmd = f"find {bundle_name} -exec touch -t 202205300000 " + "{} +"
-    zip_cmd = f"zip -rq -D -X -9 -A --compression-method deflate {bundle_zip_name} {bundle_name}"
-    subprocess.check_call(f"{touch_cmd}; {zip_cmd}", shell=True, cwd=root_path)
-
-
-def get_checksum(dst_path: str, hash_func):
-    with open(dst_path, "rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            hash_func.update(chunk)
-    return hash_func.hexdigest()
+    pr_title = "auto update model_info [skip ci]"
+    pr_description = "This PR is automatically created to update model_info.json"
+    commit_message = "auto update model_info"
+    repo_file_path = "models/model_info.json"
+    # authenticate with Github CLI
+    github_token = os.environ["GITHUB_TOKEN"]
+    repo_name = "Project-MONAI/model-zoo"
+    g = Github(github_token)
+    # create new branch
+    repo = g.get_repo(repo_name)
+    default_branch = repo.default_branch
+    new_branch = repo.create_git_ref(ref=f"refs/heads/{branch_name}", sha=repo.get_branch(default_branch).commit.sha)
+    # push changes
+    model_info = get_json_dict(model_info_path)
+    repo.update_file(
+        path=repo_file_path,
+        message=commit_message,
+        content=json.dumps(model_info),
+        sha=repo.get_contents(repo_file_path, ref=default_branch).sha,
+        branch=new_branch.ref,
+    )
+    # create PR
+    repo.create_pull(title=pr_title, body=pr_description, head=new_branch.ref, base=default_branch)
 
 
-def upload_bundle(
-    bundle_zip_file_path: str,
-    bundle_zip_filename: str,
-    release_tag: str = "hosting_storage_v1",
-    repo_name: str = "Project-MONAI/model-zoo",
-):
-    upload_command = f"gh release upload {release_tag} {bundle_zip_file_path} -R {repo_name}"
-    call_status = subprocess.run(upload_command, shell=True)
-    call_status.check_returncode()
-    source = f"https://github.com/{repo_name}/releases/download/{release_tag}/{bundle_zip_filename}"
+def split_bundle_name_version(bundle_name: str):
+    pattern_version = re.compile(r"^(.+)\_v(\d.*)$")
+    matched_result = pattern_version.match(bundle_name)
+    if matched_result is not None:
+        b_name, b_version = matched_result.groups()
+        return b_name, b_version
+    raise ValueError(f"{bundle_name} does not meet the naming format.")
 
-    return source
+
+def get_existing_bundle_list(model_info):
+    all_bundle_names = []
+    for k in model_info.keys():
+        bundle_name, _ = split_bundle_name_version(k)
+        if bundle_name not in all_bundle_names:
+            all_bundle_names.append(bundle_name)
+    return all_bundle_names
+
+
+def create_bundle_to_huggingface(bundle_name: str, org_name: str):
+    api = huggingface_hub.HfApi()
+    try:
+        _ = api.create_repo(repo_id=f"{org_name}/{bundle_name}", repo_type="model", private=False)
+    except Exception as e:
+        if "already created" in str(e):
+            print(f"{org_name}/{bundle_name} already exists, skip creating.")
+        else:
+            raise e
+
+
+def upload_version_to_huggingface(bundle_name: str, version: str, root_path: str, org_name: str):
+    api = huggingface_hub.HfApi()
+
+    try:
+        # if no file is changed, will skip uploading automatically
+
+        api.upload_folder(
+            folder_path=os.path.join(root_path, bundle_name),
+            repo_id=f"{org_name}/{bundle_name}",
+            repo_type="model",
+            commit_message=f"Upload {bundle_name} version {version}",
+        )
+    except Exception as e:
+        print(f"Error uploading {bundle_name} to Hugging Face: {e}")
+        raise e
+
+    # tag version
+    try:
+        api.create_tag(
+            repo_id=f"{org_name}/{bundle_name}",
+            tag=version,
+            repo_type="model",
+            tag_message=f"tag {bundle_name} version {version}",
+        )
+    except Exception as e:
+        if "Tag reference exists already" in str(e):
+            print(f"Tag {version} already exists, skip creating.")
+        else:
+            print(f"Error tagging {bundle_name} version {version}: {e}")
+            raise e
+
+
+def upload_bundle(bundle_name: str, version: str, root_path: str, exist_flag: bool, org_name: str = "MONAI"):
+    if exist_flag is False:
+        # need to create bundle first
+        create_bundle_to_huggingface(bundle_name=bundle_name, org_name=org_name)
+    # upload version
+    upload_version_to_huggingface(bundle_name=bundle_name, version=version, root_path=root_path, org_name=org_name)
+    # access link
+    access_link = f"https://huggingface.co/{org_name}/{bundle_name}/tree/{version}"
+
+    return access_link

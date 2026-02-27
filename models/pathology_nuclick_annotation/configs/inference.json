@@ -1,12 +1,19 @@
 {
     "imports": [
         "$import glob",
+        "$import numpy",
         "$import json",
         "$import pathlib",
         "$import os"
     ],
     "bundle_root": ".",
+    "image_key": "image",
     "output_dir": "$@bundle_root + '/eval'",
+    "output_ext": ".png",
+    "output_dtype": "$numpy.float32",
+    "output_postfix": "trans",
+    "separate_folder": true,
+    "load_pretrain": true,
     "dataset_dir": "/workspace/data/CoNSePNuclei",
     "images": "$list(sorted(glob.glob(@dataset_dir + '/Test/Images/*.png')))[:1]",
     "centroids": "$list(sorted(glob.glob(@dataset_dir + '/Test/Centroids/*.txt')))[:1]",
@@ -32,16 +39,17 @@
         "transforms": [
             {
                 "_target_": "LoadImaged",
-                "keys": "image",
-                "dtype": "uint8"
+                "keys": "@image_key",
+                "dtype": "uint8",
+                "image_only": false
             },
             {
                 "_target_": "EnsureChannelFirstd",
-                "keys": "image"
+                "keys": "@image_key"
             },
             {
                 "_target_": "ScaleIntensityRanged",
-                "keys": "image",
+                "keys": "@image_key",
                 "a_min": 0.0,
                 "a_max": 255.0,
                 "b_min": -1.0,
@@ -49,13 +57,13 @@
             },
             {
                 "_target_": "AddClickSignalsd",
-                "image": "image",
+                "image": "@image_key",
                 "foreground": "foreground",
                 "gaussian": false
             },
             {
                 "_target_": "SqueezeDimd",
-                "keys": "image"
+                "keys": "@image_key"
             }
         ]
     },
@@ -96,18 +104,14 @@
                 "keys": "pred",
                 "meta_keys": "pred_meta_dict",
                 "output_dir": "@output_dir",
-                "output_ext": ".png"
+                "output_ext": "@output_ext",
+                "output_dtype": "@output_dtype",
+                "output_postfix": "@output_postfix",
+                "separate_folder": "@separate_folder"
             }
         ]
     },
     "handlers": [
-        {
-            "_target_": "CheckpointLoader",
-            "load_path": "$@bundle_root + '/models/model.pt'",
-            "load_dict": {
-                "model": "@network"
-            }
-        },
         {
             "_target_": "StatsHandler",
             "iteration_log": false
@@ -123,10 +127,18 @@
         "val_handlers": "@handlers",
         "amp": true
     },
+    "checkpointloader": {
+        "_target_": "CheckpointLoader",
+        "load_path": "$@bundle_root + '/models/model.pt'",
+        "load_dict": {
+            "model": "@network"
+        }
+    },
     "initialize": [
         "$import sys",
         "$sys.path.append(@bundle_root)",
-        "$monai.utils.set_determinism(seed=123)"
+        "$monai.utils.set_determinism(seed=123)",
+        "$@checkpointloader(@evaluator) if @load_pretrain else None"
     ],
     "run": [
         "$@evaluator.run()"

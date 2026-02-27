@@ -15,15 +15,11 @@ import shutil
 import tempfile
 
 from utils import (
-    compress_bundle,
-    create_pull_request,
     download_large_files,
     get_changed_bundle_list,
-    get_checksum,
-    get_hash_func,
     get_json_dict,
-    push_new_model_info_branch,
     save_model_info,
+    submit_pull_request,
     upload_bundle,
 )
 
@@ -59,34 +55,36 @@ def update_model_info(
         return (False, f"Download large files error: {e}")
 
     # step 2
+    # get the latest version
     bundle_metadata_path = os.path.join(temp_path, "configs/metadata.json")
     metadata = get_json_dict(bundle_metadata_path)
     latest_version = metadata["version"]
-    bundle_zip_name = f"{bundle_name}_v{latest_version}.zip"
-    bundle_name_with_version = f"{bundle_name}_v{latest_version}"
-    zipfile_path = os.path.join(temp_dir, bundle_zip_name)
-    try:
-        compress_bundle(root_path=temp_dir, bundle_name=bundle_name, bundle_zip_name=bundle_zip_name)
-    except Exception as e:
-        return (False, f"Compress bundle error: {e}")
-
-    hash_func = get_hash_func(hash_type="sha1")
-    checksum = get_checksum(dst_path=zipfile_path, hash_func=hash_func)
 
     # step 3
+    # check if uploading a new bundle
+    model_info_path = os.path.join(models_path, model_info_file)
+    model_info = get_json_dict(model_info_path)
+    exist_flag = False
+    # check if the bundle has been created in huggingface
+    for k in model_info.keys():
+        if bundle_name in k:
+            version_info = model_info[k]
+            if "https://huggingface.co/" in version_info["source"]:
+                exist_flag = True
+                break
     try:
-        source = upload_bundle(bundle_zip_file_path=zipfile_path, bundle_zip_filename=bundle_zip_name)
+        source = upload_bundle(
+            bundle_name=bundle_name, version=latest_version, root_path=temp_dir, exist_flag=exist_flag, org_name="MONAI"
+        )
     except Exception as e:
         return (False, f"Upload bundle error: {e}")
 
     # step 4
-    model_info_path = os.path.join(models_path, model_info_file)
-    model_info = get_json_dict(model_info_path)
-
+    bundle_name_with_version = f"{bundle_name}_v{latest_version}"
     if bundle_name_with_version not in model_info.keys():
         model_info[bundle_name_with_version] = {"checksum": "", "source": ""}
 
-    model_info[bundle_name_with_version]["checksum"] = checksum
+    model_info[bundle_name_with_version]["checksum"] = ""
     model_info[bundle_name_with_version]["source"] = source
 
     save_model_info(model_info, model_info_path)
@@ -105,6 +103,7 @@ def main(changed_dirs):
     bundle_list = get_changed_bundle_list(changed_dirs)
     models_path = "models"
     model_info_file = "model_info.json"
+
     if len(bundle_list) > 0:
         for bundle in bundle_list:
             # create a temporary copy of the bundle for further processing
@@ -120,8 +119,8 @@ def main(changed_dirs):
                 raise AssertionError(f"update bundle: {bundle} failed. {msg}")
 
         # push a new branch that contains the updated model_info.json
-        branch_name = push_new_model_info_branch(model_info_path=os.path.join(models_path, model_info_file))
-        create_pull_request(branch_name)
+        submit_pull_request(model_info_path=os.path.join(models_path, model_info_file))
+        print("a pull request with updated model info is submitted.")
     else:
         print(f"all changed files: {changed_dirs} are not related to any existing bundles, skip updating.")
 
